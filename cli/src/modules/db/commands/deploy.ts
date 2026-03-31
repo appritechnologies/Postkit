@@ -11,7 +11,8 @@ import {
   dropDatabase,
   getTableCount,
 } from "../services/database";
-import {runCommittedMigrate, runDbmateStatus} from "../services/dbmate";
+import {runCommittedMigrate, findUnexpectedMigrations} from "../services/dbmate";
+import {resolveRemoteUrl} from "../utils/remotes";
 import {generateInfra, applyInfra} from "../services/infra-generator";
 import {generateGrants, applyGrants} from "../services/grant-generator";
 import {generateSeeds, applySeeds} from "../services/seed-generator";
@@ -190,29 +191,51 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     const targetTableCount = await getTableCount(targetUrl);
     spinner.succeed(`Connected to target database (${targetTableCount} tables)`);
 
-    // Step 2: Check target migration status
-    logger.step(2, totalSteps, "Checking target migration status...");
-    spinner.start("Checking migration status...");
+    // Step 2: Check for unexpected migrations (schema drift)
+    logger.step(2, totalSteps, "Checking for schema drift...");
+    spinner.start("Looking for unexpected migrations on target...");
 
-    const statusOutput = await runDbmateStatus(targetUrl);
+    const unexpectedMigrations = await findUnexpectedMigrations(targetUrl, pendingMigrations);
 
-    // Check for pending migrations on target
-    const hasPendingItems = statusOutput.includes("[ ") &&
-                          !statusOutput.match(/Pending:\s*0\b/);
-
-    if (hasPendingItems) {
-      spinner.succeed(`Found ${pendingMigrations.length} pending migration(s) to deploy`);
+    if (unexpectedMigrations.length > 0) {
+      spinner.warn(`Found ${unexpectedMigrations.length} unexpected migration(s) on target`);
       logger.blank();
-      logger.info("These migrations will be applied to the target database:");
-      for (const cm of pendingMigrations) {
-        logger.info(`  - ${cm.migrationFile.name} (${cm.description})`);
+      logger.warn("These migrations were applied outside of PostKit:");
+      for (const m of unexpectedMigrations) {
+        logger.warn(`  - ${m}`);
       }
       logger.blank();
+      logger.warn("This indicates schema drift and may cause conflicts!");
+
+      if (!options.force) {
+        const {confirm} = await inquirer.prompt([
+          {
+            type: "confirm",
+            name: "confirm",
+            message: "Continue deployment despite schema drift?",
+            default: false,
+          },
+        ]);
+
+        if (!confirm) {
+          logger.info("Deploy cancelled.");
+          return;
+        }
+      }
+      spinner.succeed("Schema drift detected - continuing");
     } else {
-      spinner.succeed("Target database up to date");
+      spinner.succeed("No schema drift detected");
     }
 
-    // Step 3: Clone target DB to local
+    // Show pending migrations to deploy
+    logger.blank();
+    logger.info(`Found ${pendingMigrations.length} pending migration(s) to deploy:`);
+    for (const cm of pendingMigrations) {
+      logger.info(`  - ${cm.migrationFile.name} (${cm.description})`);
+    }
+    logger.blank();
+
+    // Step 4: Clone target DB to local
     const localDbUrl = config.localDbUrl;
 
     logger.step(3, totalSteps, "Cloning target database to local...");

@@ -205,8 +205,10 @@ postkit db start --remote staging   # Use specific remote
 1. Checks prerequisites (pgschema, dbmate installed)
 2. Resolves target remote (default or specified)
 3. Tests connection to remote database
-4. Clones remote database to local using `pg_dump` and `psql`
-5. Creates a session file (`.postkit/db/session.json`) to track state
+4. **Checks for schema drift** - Detects migrations applied outside of PostKit
+5. Verifies database state (no pending committed migrations, no pending migration files)
+6. Clones remote database to local using `pg_dump` and `psql`
+7. Creates a session file (`.postkit/db/session.json`) to track state
 
 ---
 
@@ -282,14 +284,70 @@ postkit db deploy --remote production -f # Skip confirmations
 1. Resolves the target database URL (from remote config or `--url` flag)
 2. If an active session exists, removes it (with confirmation unless `-f`)
 3. Tests the target database connection
-4. Clones the target database to local (using `LOCAL_DATABASE_URL`)
-5. Runs a full dry-run on the local clone: infra, dbmate migrate, grants, seeds
-6. Reports dry-run results and confirms deployment (unless `-f`)
-7. Applies to target: infra, dbmate migrate, grants, seeds
-8. Drops the local clone database
-9. Marks migrations as deployed in `.postkit/db/committed.json`
+4. **Checks for schema drift** - Detects migrations on target applied outside of PostKit
+5. Shows pending migrations to deploy
+6. Clones the target database to local (using `LOCAL_DATABASE_URL`)
+7. Runs a full dry-run on the local clone: infra, dbmate migrate, grants, seeds
+8. Reports dry-run results and confirms deployment (unless `-f`)
+9. Applies to target: infra, dbmate migrate, grants, seeds
+10. Drops the local clone database
+11. Marks migrations as deployed in `.postkit/db/committed.json`
 
 If the dry run fails, deployment is aborted and no changes are made to the target database.
+
+---
+
+## 🔍 Schema Drift Detection
+
+PostKit automatically detects **schema drift** - when migrations are applied to a database outside of the PostKit workflow.
+
+### What is Schema Drift?
+
+Schema drift occurs when someone directly applies migrations or makes schema changes to a database without using PostKit. This can cause:
+- Conflicts when deploying PostKit migrations
+- Unexpected behavior in production
+- Loss of track of what changes have been applied
+
+### Detection
+
+Both `start` and `deploy` commands check for schema drift:
+
+**During `postkit db start`:**
+- Runs `dbmate status` on the remote database
+- Compares applied migrations against committed migrations
+- Warns if unexpected migrations are found
+- Asks for confirmation before continuing (unless `--force`)
+
+**During `postkit db deploy`:**
+- Runs `dbmate status` on the target database
+- Compares applied migrations against pending committed migrations
+- Shows list of unexpected migrations
+- Asks for confirmation before deploying (unless `--force`)
+
+### Example Output
+
+```
+⚠ Found 2 unexpected migration(s) on remote
+
+These migrations were applied outside of PostKit:
+  - 20250115_manual_fix.sql
+  - 20250120_hotfix.sql
+
+This indicates schema drift. The remote database has migrations that PostKit doesn't know about.
+This may cause conflicts when deploying migrations.
+
+? Continue starting session despite schema drift? (y/N)
+```
+
+### Resolving Schema Drift
+
+If schema drift is detected:
+
+1. **Review the unexpected migrations** - Check what was applied outside PostKit
+2. **Decide how to proceed:**
+   - If the migrations are valid, create corresponding PostKit migrations
+   - If the migrations should be reverted, rollback manually
+3. **Continue with caution** - Use `--force` to proceed if you understand the risks
 
 ---
 
@@ -460,3 +518,5 @@ Session migrations are staged in `.postkit/db/session/` and committed migrations
 | `Schema files have changed since the plan was generated` | Schema files were modified after running `plan`. Run `postkit db plan` again |
 | `Grants/seeds failed during apply` | Re-run `postkit db apply` — it resumes from where it left off |
 | `Deploy failed during dry run` | No changes were made to the target. Fix the issue and retry. |
+| **Schema Drift detected** | Unexpected migrations found on remote. Review migrations and use `--force` to continue if you understand the risks. |
+| `Found unexpected migration(s)` | Migrations were applied outside PostKit. Create corresponding PostKit migrations or revert manually. |

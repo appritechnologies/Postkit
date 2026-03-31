@@ -73,12 +73,12 @@ postkit init
 # Database migrations
 postkit db remote add dev "postgres://user:pass@host:5432/db" --default
 postkit db remote add staging "postgres://user:pass@host:5432/db"
-postkit db start                          # Start a migration session (uses default remote)
+postkit db start                          # Start a migration session (checks for schema drift)
 postkit db start --remote staging         # Start with specific remote
 postkit db plan                           # Generate schema diff
 postkit db apply                          # Apply to local clone
 postkit db commit                         # Commit migrations
-postkit db deploy                         # Deploy to default remote
+postkit db deploy                         # Deploy to default remote (checks for schema drift)
 postkit db deploy --remote staging        # Deploy to specific remote
 postkit db status                         # Show session state
 postkit db abort                          # Cancel session
@@ -159,6 +159,25 @@ my-project/
 1. Create `src/modules/<name>/` with `index.ts`
 2. Export a `register<Name>Module(program)` function
 3. Import and call it in `src/index.ts`
+
+---
+
+## 🔍 **Schema Drift Detection**
+
+PostKit automatically detects **schema drift** - when migrations are applied to a database outside of the PostKit workflow.
+
+Both `postkit db start` and `postkit db deploy` commands check for unexpected migrations and warn you before proceeding. This helps prevent conflicts and ensures your database state stays in sync with your migration files.
+
+If schema drift is detected, you'll see:
+```
+⚠ Found 2 unexpected migration(s) on remote
+
+These migrations were applied outside of PostKit:
+  - 20250115_manual_fix.sql
+  - 20250120_hotfix.sql
+```
+
+Use `--force` to proceed if you understand the risks.
 
 ---
 

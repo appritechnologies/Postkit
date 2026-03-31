@@ -13,7 +13,7 @@ import {
   getTableCount,
 } from "../services/database";
 import {checkPgschemaInstalled} from "../services/pgschema";
-import {checkDbmateInstalled, runDbmateStatus} from "../services/dbmate";
+import {checkDbmateInstalled, runDbmateStatus, findUnexpectedMigrations} from "../services/dbmate";
 import {getPendingCommittedMigrations} from "../utils/committed";
 import type {CommandOptions} from "../../../common/types";
 
@@ -120,11 +120,50 @@ export async function startCommand(options: StartOptions): Promise<void> {
     const remoteTableCount = await getTableCount(targetRemoteUrl);
     logger.info(`Remote database has ${remoteTableCount} tables`);
 
-    // Step 4: Verify database state
-    logger.step(4, 6, "Verifying database state...");
-
-    // Check 1: Pending committed migrations
+    // Load pending committed migrations once (used in schema drift check and state verification)
     const pendingCommitted = await getPendingCommittedMigrations();
+
+    // Step 4: Check for schema drift
+    logger.step(4, 7, "Checking for schema drift...");
+    spinner.start("Looking for unexpected migrations on remote...");
+
+    const unexpectedMigrations = await findUnexpectedMigrations(targetRemoteUrl, pendingCommitted);
+
+    if (unexpectedMigrations.length > 0) {
+      spinner.warn(`Found ${unexpectedMigrations.length} unexpected migration(s) on remote`);
+      logger.blank();
+      logger.warn("These migrations were applied outside of PostKit:");
+      for (const m of unexpectedMigrations) {
+        logger.warn(`  - ${m}`);
+      }
+      logger.blank();
+      logger.warn("This indicates schema drift. The remote database has migrations that PostKit doesn't know about.");
+      logger.info("This may cause conflicts when deploying migrations.");
+
+      if (!options.force) {
+        const {confirm} = await inquirer.prompt([
+          {
+            type: "confirm",
+            name: "confirm",
+            message: "Continue starting session despite schema drift?",
+            default: false,
+          },
+        ]);
+
+        if (!confirm) {
+          logger.info("Session start cancelled.");
+          process.exit(0);
+        }
+      }
+      spinner.succeed("Schema drift detected - continuing");
+    } else {
+      spinner.succeed("No schema drift detected");
+    }
+
+    // Step 5: Verify database state
+    logger.step(5, 7, "Verifying database state...");
+
+    // Check 1: Pending committed migrations (already loaded above)
 
     if (pendingCommitted.length > 0) {
       logger.blank();
@@ -190,8 +229,8 @@ export async function startCommand(options: StartOptions): Promise<void> {
       spinner.succeed("All migrations applied - database is in sync");
     }
 
-    // Step 5: Clone database
-    logger.step(4, 5, "Cloning remote database to local...");
+    // Step 6: Clone database
+    logger.step(6, 7, "Cloning remote database to local...");
     spinner.start("Cloning database (this may take a moment)...");
 
     if (options.dryRun) {
@@ -204,8 +243,8 @@ export async function startCommand(options: StartOptions): Promise<void> {
       logger.info(`Local clone has ${localTableCount} tables`);
     }
 
-    // Step 6: Create session
-    logger.step(6, 6, "Creating session...");
+    // Step 7: Create session
+    logger.step(7, 7, "Creating session...");
 
     if (!options.dryRun) {
       const session = await createSession(

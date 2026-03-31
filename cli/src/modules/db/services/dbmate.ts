@@ -379,3 +379,45 @@ async function cleanupFilteredMigrations(): Promise<void> {
     await fs.rm(tempDir, {recursive: true, force: true});
   }
 }
+
+/**
+ * Check for unexpected migrations on target database
+ * Returns list of migration versions applied outside of PostKit (schema drift)
+ */
+export async function findUnexpectedMigrations(
+  targetUrl: string,
+  ourMigrations: Array<{migrationFile: {name: string}}>,
+): Promise<string[]> {
+  try {
+    // Use dbmate status to check what's applied on target
+    const statusOutput = await runDbmateStatus(targetUrl);
+
+    // Extract applied migration names from dbmate status
+    // Format: "[X] 20260401004428_init.sql"
+    const appliedMigrations: string[] = [];
+    const lines = statusOutput.split('\n');
+
+    for (const line of lines) {
+      const match = line.match(/\[X\]\s+(\d+_[^.\s]+\.sql)/);
+      if (match) {
+        appliedMigrations.push(match[1]);
+      }
+    }
+
+    // Our migration filenames (without timestamp prefix)
+    const ourMigrationNames = new Set(
+      ourMigrations.map(m => m.migrationFile.name.replace(/^\d+_/, '').replace(/\.sql$/, ''))
+    );
+
+    // Find migrations on target that we don't know about
+    const unexpected = appliedMigrations.filter(name => {
+      const nameWithoutTimestamp = name.replace(/^\d+_/, '').replace(/\.sql$/, '');
+      return !ourMigrationNames.has(nameWithoutTimestamp);
+    });
+
+    return unexpected;
+  } catch (error) {
+    // If we can't check, assume no unexpected migrations (better UX)
+    return [];
+  }
+}

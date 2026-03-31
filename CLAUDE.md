@@ -86,7 +86,11 @@ The `db` module implements a **session-based migration workflow**:
    - `pgschema`: Bundled in `vendor/pgschema/` for all platforms (darwin-{arm64,amd64}, linux-{arm64,amd64}, windows-{arm64,amd64})
    - `dbmate`: npm-installed via the `dbmate` package
 4. **Migration steps execution**: The `deploy` command uses `runSteps()` to execute multi-step operations with resume capability - if a step fails, re-running resumes from where it left off.
-5. **Schema directory structure** (`db/schema/`):
+5. **Schema drift detection**: Both `start` and `deploy` commands use `findUnexpectedMigrations()` from `dbmate` service to detect migrations applied outside of PostKit:
+   - Runs `dbmate status` on the target database
+   - Compares applied migrations against committed migrations
+   - Warns user and asks for confirmation if drift is detected
+6. **Schema directory structure** (`db/schema/`):
    - `infra/` - Pre-migration (roles, schemas, extensions) - excluded from pgschema
    - `extensions/`, `types/`, `enums/`, `tables/`, etc. - pgschema-managed
    - `grants/` - Post-migration grants - excluded from pgschema
@@ -172,11 +176,11 @@ Remotes are managed via utilities in `modules/db/utils/remotes.ts`:
 
 | Command | Purpose |
 |---------|---------|
-| `postkit db start [--remote <name>]` | Clone remote DB to local, start session |
+| `postkit db start [--remote <name>]` | Clone remote DB to local, start session (checks for schema drift) |
 | `postkit db plan` | Generate schema diff with pgschema |
 | `postkit db apply` | Apply migration to local DB (creates dbmate migration) |
 | `postkit db commit` | Commit session migrations for deployment |
-| `postkit db deploy [--remote <name>]` | Deploy committed migrations (with dry-run verification) |
+| `postkit db deploy [--remote <name>]` | Deploy committed migrations (checks for schema drift, dry-run verification) |
 | `postkit db status` | Show session state |
 | `postkit db abort` | Cancel session, cleanup local resources |
 | `postkit db migration [<name>]` | Create a manual SQL migration |
@@ -232,3 +236,4 @@ logger.debug(`Remote URL: ${maskRemoteUrl(url)}`, options.verbose);
 - The `vendor/` directory contains platform-specific binaries that are bundled with the CLI - no separate installation required.
 - The `.gitignore` should include `.postkit/` to ignore all runtime files.
 - All migration-related files are in `.postkit/db/` - the only user-maintained DB files should be in `db/schema/`.
+- **Schema drift detection**: Both `start` and `deploy` commands automatically detect migrations applied outside of PostKit and warn the user before proceeding. Use `--force` to bypass the warning.
