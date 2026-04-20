@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files
+.env
+.env.local
+
+# Session and generated files
+.session.json
+.migration.sql
+.schema.sql
+
+# OS files
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Postkit
+.postkit/session
+.postkit/plan
+.postkit/schema
+postkit.config.json
+
+# Test Coverage
+coverage/
+
+
